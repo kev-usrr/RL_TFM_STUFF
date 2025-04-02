@@ -1,11 +1,11 @@
 import gymnasium as gym
-import numpy as np 
+import numpy as np
 
 from pettingzoo.utils.env import AECEnv, ParallelEnv
 from gymnasium import spaces
 
 class SupervisorWrapper(gym.Env):
-    def __init__(self, pz_env: ParallelEnv):
+    def __init__(self, pz_env: AECEnv):
         super().__init__()
         self.env = pz_env()
         self.env.reset()
@@ -26,15 +26,16 @@ class SupervisorWrapper(gym.Env):
         self.action_space = self.action_spaces[self.env.possible_agents[self.current_agent_idx]]
 
         # Espacios de observación TODO
-        self.observation_space = self.env.observation_space(self.env.possible_agents[self.current_agent_idx])
+        self.observation_space = self.observation_spaces[self.env.possible_agents[self.current_agent_idx]]
+        # self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_agents * np.prod(obs_shape),), dtype=np.float32)
 
     def step(self, action):
         # La acción que tomamos se la asignamos al siguiente agente.
         self.joint_action.append(action)
         self.current_agent_idx += 1
 
-        print(self.joint_action)
-        print(self.action_space)
+        # print(self.joint_action)
+        # print(self.action_space)
 
         # Si todavía no hemos asignado todas las acciones...
         if len(self.joint_action) < self.num_agents:
@@ -44,30 +45,42 @@ class SupervisorWrapper(gym.Env):
             # Devolvemos las observaciones de todos los agentes
             # Reward 0, Terminación False, Truncado False.
             return self._get_observations(), 0, False, False, {}
-        
-        actions_map = {agent:self.joint_action[i] for agent,i in zip(self.env.agents, range(self.num_agents))}
-        observations, rewards, terminations, truncations, infos = self.env.step(actions_map)
+
+        # actions_map = {agent:self.joint_action[i] for agent,i in zip(self.env.agents, range(self.num_agents))}
+        # observations, rewards, terminations, truncations, infos = self.env.step(actions_map)
+        rewards, terminations, truncations = [], [], []
+        for action in self.joint_action:
+          observation, reward, termination, truncation, info = self.env.last()
+          self.env.step(action if not termination and not truncation else None) # Pass None if terminated or truncated
+          rewards.append(reward)
+          terminations.append(termination)
+          truncations.append(truncation)
+
 
         # Reseteamos el buffer
         self.joint_action = []
         self.current_agent_idx = 0
         # Cambiamos el espacio de acciones al del siguiente agente
         self.action_space = self.action_spaces[self.env.possible_agents[self.current_agent_idx]]
+        self.observation_space = self.observation_spaces[self.env.possible_agents[self.current_agent_idx]]
 
         # Acumulamos el reward sumando sobre el reward de todos los agentes
-        tot_reward = sum(rewards.values())
+        # tot_reward = sum(rewards.values())
+        tot_reward = sum(rewards)
 
         # Determinamos si debemos parar la ejecución
-        done = any(terminations.values()) or any(truncations.values())
-        return self._get_observations(), tot_reward, done, False, infos
-    
-    
+        # done = any(terminations.values()) or any(truncations.values())
+        done = any(terminations) or any(truncations)
+        return self._get_observations(), tot_reward, done, False, {}
+
+
     def reset(self, seed=None, options=None):
         self.env.reset(seed=seed, options=options)
         self.joint_action = []
         self.current_agent_idx = 0
         return self._get_observations(), {}
 
-    
+
     def _get_observations(self):
-        return self.env.state
+        #obs = np.concatenate([self.env.observe(agent).flatten() for agent in self.env.possible_agents])
+        return self.env.observe(self.env.possible_agents[self.current_agent_idx]).flatten()
