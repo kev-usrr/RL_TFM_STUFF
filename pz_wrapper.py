@@ -15,12 +15,14 @@ class SupervisorWrapper(gym.Env):
 
     def __init__(self, pz_env: AECEnv):
         super().__init__()
-        self.env = pz_env()
+        self.env = pz_env
         self.env.reset()
 
         # Con esto controlamos si el entorno está basado en imágenes y por tanto, si vamos a usar una ResNet-18 pre-entrenada
         # en ImageNet para obtener los embeddings. No me gusta mucho este código la verdad jajaja
         self.image_based = any([x in self.env.metadata.get('name', '').lower() for x in self.metadata['image_based_environments']])
+        if 'knights_archers_zombies' in self.env.metadata.get('name', '').lower():
+          self.image_based = not(self.env.vector_state)
 
         # Cargar ResNet-18 preentrenada
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -51,7 +53,7 @@ class SupervisorWrapper(gym.Env):
         # Es decir, cada timestep, cambiaremos el action space al del siguiente agente.
         self.action_space = self.action_spaces[self.env.possible_agents[self.current_agent_idx]]
 
-        # Espacios de observación TODO
+        # Espacios de observación
         self.observation_space = self.observation_spaces[self.env.possible_agents[self.current_agent_idx]]
         # self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_agents * np.prod(obs_shape),), dtype=np.float32)
 
