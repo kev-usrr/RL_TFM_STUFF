@@ -23,7 +23,7 @@ class SupervisorWrapper(gym.Env):
         # en ImageNet para obtener los embeddings. No me gusta mucho este código la verdad jajaja
         self.image_based = any([x in self.env.metadata.get('name', '').lower() for x in self.metadata['image_based_environments']])
         if 'knights_archers_zombies' in self.env.metadata.get('name', '').lower():
-          self.image_based = not(self.env.get('vector_state', True))
+          self.image_based = not(self.env.vector_state)
 
         # Cargar ResNet-18 preentrenada
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -36,9 +36,9 @@ class SupervisorWrapper(gym.Env):
         self.num_agents = len(self.env.possible_agents)
         # Espacios de acción de cada agente, en principio serán los mismos para todos excepto en algunos casos específicos
         self.action_spaces = {agent:self.env.action_space(agent) for agent in self.env.possible_agents}
-        # Vamos a crear una numeración para las acciones disponibles para cada uno de los agentes empezando por el 1
-        # Un 0 indicará que un agente no tiene acciones asignadas.
-        # self.action_spaces_idx = {agent:{action:i for i,action in zip(range(1, self.action_spaces[agent].n), self.action_spaces[agent])} for agent in self.env.possible_agents}
+        
+        # Con este bucle vamos a calcular las posiciones del vector de observaciones que van a ocupar
+        # las acciones
         aux_num = 0
         for action_space in self.action_spaces.values():
           if type(action_space) == spaces.Discrete:
@@ -73,11 +73,10 @@ class SupervisorWrapper(gym.Env):
         # Es decir, cada timestep, cambiaremos el action space al del siguiente agente.
         self.action_space = self.action_spaces[self.env.possible_agents[self.current_agent_idx]]
 
-        # Espacios de observación
+        # Espacios de observación que también será dinámico. En cada timestep pasamos al del siguiente agente
         self.observation_space = self.observation_spaces[self.env.possible_agents[self.current_agent_idx]]
-        # self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_agents * np.prod(obs_shape),), dtype=np.float32)
 
-    
+
     def step(self, action):
         # La acción que tomamos se la asignamos al siguiente agente.
         self.joint_action.append(action)
@@ -94,12 +93,14 @@ class SupervisorWrapper(gym.Env):
             # Reward 0, Terminación False, Truncado False.
             return self._get_observations(action), 0, False, False, {}
 
-        # actions_map = {agent:self.joint_action[i] for agent,i in zip(self.env.agents, range(self.num_agents))}
-        # observations, rewards, terminations, truncations, infos = self.env.step(actions_map)
         rewards, terminations, truncations = [], [], []
         for action in self.joint_action:
           observation, reward, termination, truncation, info = self.env.last()
+          
           self.env.step(action if not termination and not truncation else None) # Pass None if terminated or truncated
+          if termination or truncation:
+            self.num_agents -= 1
+
           rewards.append(reward)
           terminations.append(termination)
           truncations.append(truncation)
@@ -116,20 +117,29 @@ class SupervisorWrapper(gym.Env):
 
         # Determinamos si debemos parar la ejecución
         # done = any(terminations.values()) or any(truncations.values())
-        done = any(terminations) or any(truncations)
+        done = all(terminations) or all(truncations)
+        # if done:
+        #   print(f'GAME FINISHED...')
         return self._get_observations(), tot_reward, done, False, {}
 
 
     def reset(self, seed=None, options=None):
-        self.env.reset(seed=seed, options=options)
-        self.joint_action = []
-        self.current_agent_idx = 0
-        return self._get_observations(), {}
+      # print(f'RESETTING ENVIRONMENT...')
+      self.env.reset(seed=seed, options=options)
+      # Reseteamos la lista de acciones y el puntero al agente actual
+      self.joint_action = []
+      self.current_agent_idx = 0
+      # Reseteamos el contador de agentes
+      self.num_agents = len(self.env.possible_agents)
+      # Actualizamos el espacio de acción y observación
+      self._update_spaces()
+      return self._get_observations(), {}
 
 
     def _update_spaces(self):
-      self.action_space = self.action_spaces[self.env.possible_agents[self.current_agent_idx]]
-      self.observation_space = self.observation_spaces[self.env.possible_agents[self.current_agent_idx]]
+      if len(self.env.agents) > 0:
+        self.action_space = self.action_spaces[self.env.agents[self.current_agent_idx]]
+        self.observation_space = self.observation_spaces[self.env.agents[self.current_agent_idx]]
 
 
     def _add_action_info(self, action=None):
