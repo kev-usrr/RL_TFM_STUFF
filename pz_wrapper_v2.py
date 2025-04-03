@@ -151,7 +151,7 @@ class SupervisorWrapper(gym.Env):
         aux = []
         for x in self.joint_action:
           if isinstance(x, (np.generic, numbers.Number)):
-            aux.append(x)
+            aux.append(x+1)
           else:
             aux.extend(x)
         aux += [0] * (self.action_append - len(aux))
