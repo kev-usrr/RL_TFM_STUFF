@@ -10,6 +10,8 @@ import torchvision.transforms as transforms
 from pettingzoo.utils.env import AECEnv, ParallelEnv
 from gymnasium import spaces
 
+# import matplotlib.pyplot as plt
+
 class SupervisorWrapper(gym.Env):
     metadata = {'render_modes': ['human'],
                 'image_based_environments': ['cooperative_pong', 'knights_archers_zombies', 'pistonball']}
@@ -36,7 +38,7 @@ class SupervisorWrapper(gym.Env):
         self.num_agents = len(self.env.possible_agents)
         # Espacios de acción de cada agente, en principio serán los mismos para todos excepto en algunos casos específicos
         self.action_spaces = {agent:self.env.action_space(agent) for agent in self.env.possible_agents}
-        
+
         # Con este bucle vamos a calcular las posiciones del vector de observaciones que van a ocupar
         # las acciones
         aux_num = 0
@@ -94,9 +96,10 @@ class SupervisorWrapper(gym.Env):
             return self._get_observations(action), 0, False, False, {}
 
         rewards, terminations, truncations = [], [], []
-        for action in self.joint_action:
+        for i, action in enumerate(self.joint_action):
           observation, reward, termination, truncation, info = self.env.last()
-          
+          # print(i, self.env.agent_selection)
+
           self.env.step(action if not termination and not truncation else None) # Pass None if terminated or truncated
           if termination or truncation:
             self.num_agents -= 1
@@ -160,6 +163,9 @@ class SupervisorWrapper(gym.Env):
 
 
     def _get_observations(self, action=None):
+        # print(self.env.agents[self.current_agent_idx])
+        # plt.imshow(self.env.observe(self.env.agents[self.current_agent_idx]))
+        # plt.show()
         #obs = np.concatenate([self.env.observe(agent).flatten() for agent in self.env.possible_agents])
         if self.image_based:
           return np.array(
