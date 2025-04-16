@@ -10,7 +10,7 @@ import torchvision.transforms as transforms
 from pettingzoo.utils.env import AECEnv, ParallelEnv
 from gymnasium import spaces
 
-# import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 
 class SupervisorWrapper(gym.Env):
     metadata = {'render_modes': ['human'],
@@ -53,9 +53,10 @@ class SupervisorWrapper(gym.Env):
         # Es decir, el supervisor no solo "verá" la observación de cada agente, sinó también todas las acciones que
         # ha asignado hasta el momento (que serán siempre las últimas posiciones del vector de observaciones)
         self.observation_spaces = {agent:self.env.observation_space(agent) for agent in self.env.possible_agents}
+        self.max_obs_len = max([self.__get_flatten_shape(self.observation_spaces[agent].shape) for agent in self.env.possible_agents])
         self.extended_observation_spaces = {
-            self.env.possible_agents[i]: spaces.Box(low=-np.inf, high=np.inf, shape=(self.observation_spaces[self.env.possible_agents[i]].shape[0] + self.action_append,), dtype=np.float32)
-            for i in range(len(self.env.possible_agents))
+            agent: spaces.Box(low=-np.inf, high=np.inf, shape=(self.max_obs_len + self.action_append,), dtype=np.float32)
+            for agent in self.env.possible_agents
         }
         self.observation_spaces = self.extended_observation_spaces
 
@@ -77,8 +78,15 @@ class SupervisorWrapper(gym.Env):
 
         # Espacios de observación que también será dinámico. En cada timestep pasamos al del siguiente agente
         self.observation_space = self.observation_spaces[self.env.possible_agents[self.current_agent_idx]]
+    
+    
+    def __get_flatten_shape(self, tensor_shape):
+      ret = 1
+      for x in tensor_shape:
+        ret *= x
+      return ret
 
-
+    
     def step(self, action):
         # La acción que tomamos se la asignamos al siguiente agente.
         self.joint_action.append(action)
@@ -121,13 +129,12 @@ class SupervisorWrapper(gym.Env):
         # Determinamos si debemos parar la ejecución
         # done = any(terminations.values()) or any(truncations.values())
         done = all(terminations) or all(truncations)
-        # if done:
-        #   print(f'GAME FINISHED...')
+        if done:
+          return [], tot_reward, done, False, {}
         return self._get_observations(), tot_reward, done, False, {}
 
 
     def reset(self, seed=None, options=None):
-      # print(f'RESETTING ENVIRONMENT...')
       self.env.reset(seed=seed, options=options)
       # Reseteamos la lista de acciones y el puntero al agente actual
       self.joint_action = []
@@ -166,18 +173,22 @@ class SupervisorWrapper(gym.Env):
         # print(self.env.agents[self.current_agent_idx])
         # plt.imshow(self.env.observe(self.env.agents[self.current_agent_idx]))
         # plt.show()
-        #obs = np.concatenate([self.env.observe(agent).flatten() for agent in self.env.possible_agents])
+        agent = self.env.agents[self.current_agent_idx]
+        obs   = self.env.observe(agent)
+        obs   = np.pad(obs, (0, self.max_obs_len - self.__get_flatten_shape(obs.shape)), mode='constant')
+        
         if self.image_based:
           return np.array(
             # Embeddings de la observación del agente
-            self._get_resnet18_embedding(torch.tensor(self.env.observe(self.env.possible_agents[self.current_agent_idx]), dtype=torch.float32).permute(2, 0, 1)).tolist() +
+            self._get_resnet18_embedding(torch.tensor(obs, dtype=torch.float32).permute(2, 0, 1)).tolist() +
             # Le sumamos el identificador de las acciones
             self._add_action_info(action)
           )
-
+        
+        
         return np.array(
            # Observaciones del agente actual
-           self.env.observe(self.env.possible_agents[self.current_agent_idx]).flatten().tolist() +
+           obs.flatten().tolist() +
            # Le sumamos el identificador de las acciones
            self._add_action_info(action)
         )
@@ -193,5 +204,5 @@ class SupervisorWrapper(gym.Env):
 
       with torch.no_grad():
           embedding = self.model(image_tensor)
-      # Antes de devolver el tensor, lo normalizo con norm. L2 y lo paso a Numpy.
-      return torch.nn.functional.normalize(embedding.view(-1), p=2, dim=0).cpu().numpy()
+
+      return embedding.view(-1).cpu().numpy()
