@@ -78,15 +78,14 @@ class SupervisorWrapper(gym.Env):
 
         # Espacios de observación que también será dinámico. En cada timestep pasamos al del siguiente agente
         self.observation_space = self.observation_spaces[self.env.possible_agents[self.current_agent_idx]]
-    
-    
+
+
     def __get_flatten_shape(self, tensor_shape):
       ret = 1
       for x in tensor_shape:
         ret *= x
       return ret
 
-    
     def step(self, action):
         # La acción que tomamos se la asignamos al siguiente agente.
         self.joint_action.append(action)
@@ -175,8 +174,7 @@ class SupervisorWrapper(gym.Env):
         # plt.show()
         agent = self.env.agents[self.current_agent_idx]
         obs   = self.env.observe(agent)
-        obs   = np.pad(obs, (0, self.max_obs_len - self.__get_flatten_shape(obs.shape)), mode='constant')
-        
+    
         if self.image_based:
           return np.array(
             # Embeddings de la observación del agente
@@ -184,14 +182,14 @@ class SupervisorWrapper(gym.Env):
             # Le sumamos el identificador de las acciones
             self._add_action_info(action)
           )
-        
-        
-        return np.array(
-           # Observaciones del agente actual
-           obs.flatten().tolist() +
-           # Le sumamos el identificador de las acciones
-           self._add_action_info(action)
-        )
+        else:
+          obs = np.pad(obs.flatten(), (0, self.max_obs_len - self.__get_flatten_shape(obs.shape)), mode='constant')
+          return np.array(
+            # Observaciones del agente actual
+            obs.flatten().tolist() +
+            # Le sumamos el identificador de las acciones
+            self._add_action_info(action)
+          )
 
 
     def _get_resnet18_embedding(self, image_tensor):
