@@ -28,11 +28,12 @@ class SupervisorWrapper(gym.Env):
           self.image_based = not(self.env.vector_state)
 
         # Cargar ResNet-18 preentrenada
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = models.resnet18(weights='DEFAULT')
-        self.model = nn.Sequential(*list(self.model.children())[:-1])
-        self.model.eval()
-        self.model.to(self.device)
+        if self.image_based:
+          self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+          self.model = models.resnet18(weights='DEFAULT')
+          self.model = nn.Sequential(*list(self.model.children())[:-1])
+          self.model.eval()
+          self.model.to(self.device)
 
         # Número de agentes del environment
         self.num_agents = len(self.env.possible_agents)
@@ -175,6 +176,7 @@ class SupervisorWrapper(gym.Env):
         # plt.show()
         agent = self.env.agents[self.current_agent_idx]
         obs   = self.env.observe(agent)
+        # print(obs)
     
         if self.image_based:
           return np.array(
