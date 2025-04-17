@@ -65,8 +65,9 @@ class SupervisorWrapper(gym.Env):
         if self.image_based:
           self.observation_spaces = {agent:spaces.Box(low=-np.inf, high=np.inf, shape=(512 + self.action_append, ), dtype=np.float32) for agent in self.env.possible_agents}
 
+        print(f'{self.env.metadata.get("name", "")}')
         print(f'ACTION SPACES: {self.action_spaces}')
-        print(f'OBSERVATION SPACES: {self.observation_spaces}')
+        print(f'OBSERVATION SPACES: {self.observation_spaces}\n')
 
         # Vector de acción conjunta que ampliamos en cada timestep
         self.joint_action = []
