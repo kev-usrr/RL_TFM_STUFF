@@ -26,6 +26,10 @@ class CooperativePongWrapperSpeed:
         self.env.step(action)
 
     
+    def render(self):
+        return self.env.render()
+
+    
     def observation_space(self, agent):
         return spaces.Box(low=-np.inf, high=np.inf, shape=(8, ), dtype=np.float32)
     

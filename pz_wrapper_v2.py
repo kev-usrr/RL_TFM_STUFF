@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 
 class SupervisorWrapper(gym.Env):
     metadata = {'render_modes': ['human'],
-                'image_based_environments': ['cooperative_pong', 'knights_archers_zombies', 'pistonball']}
+                'image_based_environments': ['cooperative_pong', 'knights_archers_zombies', 'pistonball', 'entombed_cooperative']}
 
     def __init__(self, pz_env: AECEnv):
         super().__init__()
@@ -146,6 +146,8 @@ class SupervisorWrapper(gym.Env):
       self._update_spaces()
       return self._get_observations(), {}
 
+    def render(self):
+      return self.env.render()
 
     def _update_spaces(self):
       if len(self.env.agents) > 0:
@@ -177,7 +179,7 @@ class SupervisorWrapper(gym.Env):
         agent = self.env.agents[self.current_agent_idx]
         obs   = self.env.observe(agent)
         # print(obs)
-    
+
         if self.image_based:
           return np.array(
             # Embeddings de la observación del agente
