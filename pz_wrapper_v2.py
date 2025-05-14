@@ -16,7 +16,7 @@ class SupervisorWrapper(gym.Env):
     metadata = {'render_modes': ['human'],
                 'image_based_environments': ['cooperative_pong', 'knights_archers_zombies', 'pistonball', 'entombed_cooperative']}
 
-    def __init__(self, pz_env: AECEnv):
+    def __init__(self, pz_env: AECEnv, aggregation_method='sum'):
         super().__init__()
         self.env = pz_env
         self.env.reset()
@@ -81,7 +81,20 @@ class SupervisorWrapper(gym.Env):
         # Espacios de observación que también será dinámico. En cada timestep pasamos al del siguiente agente
         self.observation_space = self.observation_spaces[self.env.possible_agents[self.current_agent_idx]]
 
+        if aggregation_method == 'sum':
+          self.agg_func = self.__reward_sum
+        elif aggregation_method == 'nash':
+          self.agg_func = self.__reward_nash_social
 
+
+    def __reward_sum(self, rewards):
+      return sum(rewards)
+
+
+    def __reward_nash_social(self, rewards):
+      return (np.exp(np.mean(rewards))) ** (1 / len(rewards))
+    
+    
     def __get_flatten_shape(self, tensor_shape):
       ret = 1
       for x in tensor_shape:
@@ -92,9 +105,6 @@ class SupervisorWrapper(gym.Env):
         # La acción que tomamos se la asignamos al siguiente agente.
         self.joint_action.append(action)
         self.current_agent_idx += 1
-
-        # print(self.joint_action)
-        # print(self.action_space)
 
         # Si todavía no hemos asignado todas las acciones...
         if len(self.joint_action) < self.num_agents:
@@ -124,11 +134,10 @@ class SupervisorWrapper(gym.Env):
         self._update_spaces()
 
         # Acumulamos el reward sumando sobre el reward de todos los agentes
-        # tot_reward = sum(rewards.values())
-        tot_reward = sum(rewards)
+        tot_reward = self.agg_func(rewards)
+        # tot_reward = sum(rewards)
 
         # Determinamos si debemos parar la ejecución
-        # done = any(terminations.values()) or any(truncations.values())
         done = all(terminations) or all(truncations)
         if done:
           return [], tot_reward, done, False, {}
@@ -173,9 +182,6 @@ class SupervisorWrapper(gym.Env):
 
 
     def _get_observations(self, action=None):
-        # print(self.env.agents[self.current_agent_idx])
-        # plt.imshow(self.env.observe(self.env.agents[self.current_agent_idx]))
-        # plt.show()
         agent = self.env.agents[self.current_agent_idx]
         obs   = self.env.observe(agent)
         # print(obs)
