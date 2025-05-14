@@ -97,15 +97,15 @@ class SupervisorWrapper(gym.Env):
 
         if aggregation_method == 'sum':
           self.agg_func = self.__reward_sum
-        elif aggregation_method == 'nash':
-          self.agg_func = self.__reward_nash_social
+        elif aggregation_method == 'expmean':
+          self.agg_func = self.__reward_expmean
 
 
     def __reward_sum(self, rewards):
       return sum(rewards)
 
 
-    def __reward_nash_social(self, rewards):
+    def __reward_expmean(self, rewards):
       return (np.exp(np.mean(rewards))) ** (1 / len(rewards))
 
 
