@@ -30,8 +30,12 @@ class ZombiesWrapper:
 
     
     def observation_space(self, agent):
-        return spaces.Box(low=-np.inf, high=np.inf, shape=(11, ), dtype=np.float32)
+        return spaces.Box(low=-np.inf, high=np.inf, shape=(13, ), dtype=np.float32)
     
+    
+    def __get_orientation(self, agent):
+        return self.env.agent_list[self.env.agent_name_mapping[agent]].vector_state[2:]
+         
     
     def __detect_zombies(self, imagen_rgb):
         height, width = imagen_rgb.shape[:2]
@@ -59,18 +63,19 @@ class ZombiesWrapper:
             rel_y = cy - center[1]
             centros.append((rel_x, rel_y))
 
-        return centros  # opcional: devuelve también la máscara
+        norm_center = [(x/(width/2), y/(height/2)) for (x,y) in centros]
+        return norm_center  # opcional: devuelve también la máscara
 
     
     def observe(self, agent):
         original_obs = self.env.observe(agent)
         aux = [coord for par in self.__detect_zombies(original_obs) for coord in par]
-        aux = aux[:10] + [0] * (10 - len(aux))
+        aux = self.__get_orientation(agent).tolist() + (aux[:10] + [-2] * (10 - len(aux)))
         if agent.startswith('archer'):
-            aux += [1]
+            aux = [1] + aux
         else:
-            aux += [2]
-        return np.array([aux])
+            aux = [2] + aux
+        return np.array(aux)
 
     
     # Encaminamos todo lo demás al entorno original
