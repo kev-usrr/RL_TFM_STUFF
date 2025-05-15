@@ -39,19 +39,18 @@ class PolicyNetwork(nn.Module):
 class RewardAggregator(nn.Module):
     def __init__(self, num_agents):
         super().__init__()
-        self.model = nn.Sequential(
-            nn.Linear(num_agents, 128),
+        self.attention = nn.Sequential(
+            nn.Linear(num_agents, 64),
             nn.ReLU(),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Linear(32, 1),
+            nn.Linear(64, num_agents),
+            nn.Softmax(dim=-1)
         )
-
-
+        self.value = nn.Linear(num_agents, 1)
+        
     def forward(self, reward_vector):
-        return self.model(reward_vector).squeeze()  # output: escalar
+        weights = self.attention(reward_vector)
+        weighted_rewards = weights * reward_vector
+        return self.value(weighted_rewards).squeeze()
 
 # --- 3. Entrenamiento PPO simplificado ---
 
@@ -68,9 +67,10 @@ def compute_advantages(rewards, values, gamma=0.99, lam=0.95):
         gae = delta + gamma * lam * gae
         advantages.insert(0, gae.clone())
         next_value = values[step]
-        return torch.stack(advantages)
+    return torch.stack(advantages)
 
-def ppo_update(policy, reward_model, optimizer, trajectories, clip_ratio=0.2):
+
+def ppo_update(policy, reward_model, policy_optimizer, reward_optimizer, trajectories, clip_ratio=0.2):
     obs = torch.stack(trajectories['obs'])
     act = torch.stack(trajectories['actions'])
     logp_old = torch.stack(trajectories['logprobs'])
@@ -91,22 +91,22 @@ def ppo_update(policy, reward_model, optimizer, trajectories, clip_ratio=0.2):
     entropy = dist.entropy().mean()
     loss = policy_loss + 0.5 * value_loss - 0.01 * entropy
 
-    optimizer.zero_grad()
+    # Backpropagation con dos optimizadores
+    policy_optimizer.zero_grad()
+    reward_optimizer.zero_grad()
     loss.backward()
-    optimizer.step()
 
-    # Verifica que reward_model recibe gradiente
-    # for name, param in reward_model.named_parameters():
-    #     if param.grad is not None:
-    #         print(f"[GRADIENTE] {name}: {param.grad.abs().mean().item():.6f}")
-    #     else:
-    #         print(f"[SIN GRADIENTE] {name}")
+    # Monitorizar normas de gradientes
+    policy_grad_norm = torch.norm(torch.stack([torch.norm(p.grad) for p in policy.parameters() if p.grad is not None]))
+    reward_grad_norm = torch.norm(torch.stack([torch.norm(p.grad) for p in reward_model.parameters() if p.grad is not None]))
+    print(f"Policy grad norm: {policy_grad_norm:.4f}, Reward grad norm: {reward_grad_norm:.4f}")
     
-    # for name, param in policy.named_parameters():
-    #     if param.grad is not None:
-    #         print(f"[GRADIENTE] {name}: {param.grad.abs().mean().item():.6f}")
-    #     else:
-    #         print(f"[SIN GRADIENTE] {name}")
+    # Gradient clipping opcional pero recomendado
+    torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=0.5)
+    torch.nn.utils.clip_grad_norm_(reward_model.parameters(), max_norm=0.5)
+    
+    policy_optimizer.step()
+    reward_optimizer.step()
 
     return loss.item()
 
@@ -120,9 +120,10 @@ def train_ppo(env, n_episodes=1_000, max_timesteps=10_000, file_name='ppo.pt'):
     best_mean_rew = float('-inf')
 
     policy = PolicyNetwork(obs_dim, act_dim)
-    reward_model = RewardAggregator(num_agents+obs_dim)
+    reward_model = RewardAggregator(num_agents)
 
-    optimizer = optim.Adam(list(policy.parameters()) + list(reward_model.parameters()), lr=1e-3)
+    policy_optimizer = optim.Adam(policy.parameters(), lr=3e-4)
+    reward_optimizer = optim.Adam(reward_model.parameters(), lr=1e-3)
 
     alpha = 1.0
     min_alpha = 0.0
@@ -143,9 +144,12 @@ def train_ppo(env, n_episodes=1_000, max_timesteps=10_000, file_name='ppo.pt'):
             
             if len(new_obs) == 0:
                 new_obs = np.zeros(shape=(obs_dim, ))
-            learned_reward = reward_model(torch.cat((reward_vector, torch.tensor(new_obs).float()), dim=0))
+            reward_vector_tensor = torch.tensor(reward_vector, dtype=torch.float32, requires_grad=True)
+            learned_reward = reward_model(reward_vector_tensor)
+
             heuristic_reward = torch.tensor(baseline_reward_fn(reward_vector), dtype=torch.float32, requires_grad=False)
             alpha_tensor = torch.tensor(alpha, dtype=torch.float32)
+            
             scalar_reward = alpha_tensor * learned_reward + (1 - alpha_tensor) * heuristic_reward
 
             # print(reward_vector, scalar_reward)
@@ -168,10 +172,10 @@ def train_ppo(env, n_episodes=1_000, max_timesteps=10_000, file_name='ppo.pt'):
         trajectories['advantages'] = advantages
         trajectories['returns'] = returns
 
-        loss_val = ppo_update(policy, reward_model, optimizer, trajectories)
+        loss_val = ppo_update(policy, reward_model, policy_optimizer, reward_optimizer, trajectories)
         alpha = max(alpha - alpha_decay, min_alpha)
 
-        last_rew_mean = torch.mean(all_rewards[-1]).item()
+        last_rew_mean = np.sum(np.array(all_rewards))
         if last_rew_mean > best_mean_rew:
             best_mean_rew = last_rew_mean
             print(f'Best mean reward reached: {best_mean_rew}')
