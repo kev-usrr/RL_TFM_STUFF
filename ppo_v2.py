@@ -23,10 +23,13 @@ class PolicyNetwork(nn.Module):
             nn.Linear(128, act_dim)
         )
         self.critic = nn.Sequential(
+            nn.Linear(256, 256),
+            nn.ReLU(),
             nn.Linear(256, 128),
             nn.ReLU(),
             nn.Linear(128, 1)
         )
+
 
     def forward(self, x):
         shared_features = self.shared_net(x)
@@ -59,12 +62,13 @@ class RewardTransformer(nn.Module):
         return self.value_head(weighted_rewards).squeeze() * self.reward_scale + self.reward_bias
 
 class PPOTrainer:
-    def __init__(self, env, lr_policy=3e-4, lr_reward=1e-3, gamma=0.99, lam=0.95, clip_ratio=0.2):
+    def __init__(self, env, lr_policy=3e-4, lr_reward=1e-3, gamma=0.99, lam=0.95, clip_ratio=0.3):
         self.env = env
         self.obs_dim = env.observation_space.shape[0]
         self.act_dim = env.action_space.n
-        self.num_agents = getattr(env, 'num_agents', 1)  # Asume 1 si no hay múltiples agentes
+        self.num_agents = getattr(env, 'num_agents', 1)
         
+        # Mover modelos al dispositivo correcto
         self.policy = PolicyNetwork(self.obs_dim, self.act_dim).to(device)
         self.reward_net = RewardTransformer(self.num_agents).to(device)
         
@@ -74,18 +78,23 @@ class PPOTrainer:
         self.gamma = gamma
         self.lam = lam
         self.clip_ratio = clip_ratio
-        self.entropy_coef = 0.01
+        self.entropy_coef = 0.1
         
         # Estadísticas para normalización
-        self.reward_mean = 0
-        self.reward_std = 1
+        self.reward_mean = torch.zeros(1, device=device)
+        self.reward_std = torch.ones(1, device=device)
         self.reward_momentum = 0.9
+
+        print(f'NUM AGENTS: {self.num_agents}')
 
     def compute_advantages(self, rewards, values, dones):
         advantages = []
         last_advantage = 0
         next_value = 0
         next_done = 0
+        
+        # Convertir dones a tensor en el dispositivo correcto
+        dones = torch.as_tensor(dones, dtype=torch.float32, device=device)
         
         for t in reversed(range(len(rewards))):
             if t == len(rewards) - 1:
@@ -101,80 +110,84 @@ class PPOTrainer:
         
         return torch.stack(advantages)
 
-    def normalize_rewards(self, rewards):
-        """Normalización online de recompensas"""
-        batch_mean = rewards.mean()
-        batch_std = rewards.std()
-        
-        self.reward_mean = self.reward_momentum * self.reward_mean + (1 - self.reward_momentum) * batch_mean
-        self.reward_std = self.reward_momentum * self.reward_std + (1 - self.reward_momentum) * batch_std
-        
-        return (rewards - self.reward_mean) / (self.reward_std + 1e-8)
-
     def update(self, trajectories):
-      obs = torch.stack(trajectories['obs'])
-      actions = torch.stack(trajectories['actions'])
-      old_logprobs = torch.stack(trajectories['logprobs'])
-      rewards = torch.stack(trajectories['rewards'])
-      values = torch.stack(trajectories['values'])
-      dones = torch.tensor(trajectories['dones'], dtype=torch.float32)
-      
-      # Normalización de rewards (sin grafo computacional)
-      with torch.no_grad():
-          rewards = self.normalize_rewards(rewards)
-      
-      # Calcular advantages (sin grafo computacional)
-      with torch.no_grad():
-          advantages = self.compute_advantages(rewards, values, dones)
-          returns = advantages + values
-      
-      # Forward pass
-      logits, new_values = self.policy(obs)
-      dist = Categorical(logits=logits)
-      new_logprobs = dist.log_prob(actions)
-      entropy = dist.entropy().mean()
-      
-      ratio = (new_logprobs - old_logprobs).exp()
-      
-      # Pérdidas
-      policy_loss1 = ratio * advantages
-      policy_loss2 = torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * advantages
-      policy_loss = -torch.min(policy_loss1, policy_loss2).mean()
-      
-      value_loss = 0.5 * (returns - new_values.squeeze()).pow(2).mean()
-      
-      # Pérdida total
-      loss = policy_loss + value_loss - self.entropy_coef * entropy
-      
-      # Backpropagation - SOLUCIÓN CLAVE
-      self.policy_optim.zero_grad()
-      self.reward_optim.zero_grad()
-      
-      # Solo un backward() sin retain_graph
-      loss.backward()
-      
-      print("\n" + "="*50)
-      print("GRADIENTES EN REWARD NETWORK:")
-      for name, param in self.reward_net.named_parameters():
-          if param.grad is not None:
-              print(f"{name:20} grad_mean: {param.grad.abs().mean().item():.5f}")
-          else:
-              print(f"{name:20} SIN GRADIENTES")
-      
-      print("\nGRADIENTES EN POLICY NETWORK:")
-      for name, param in self.policy.named_parameters():
-          if param.grad is not None:
-              print(f"{name:20} grad_mean: {param.grad.abs().mean().item():.5f}")
-      print("="*50 + "\n")
-      
-      # Gradient clipping
-      torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 0.5)
-      torch.nn.utils.clip_grad_norm_(self.reward_net.parameters(), 0.5)
-      
-      self.policy_optim.step()
-      self.reward_optim.step()
-      
-      return loss.item()
+        # Mover todos los tensores al dispositivo correcto
+        obs = torch.stack(trajectories['obs']).to(device)
+        actions = torch.stack(trajectories['actions']).to(device)
+        old_logprobs = torch.stack(trajectories['logprobs']).to(device)
+        rewards = torch.stack(trajectories['rewards']).to(device)
+        values = torch.stack(trajectories['values']).to(device)
+        dones = torch.tensor(trajectories['dones'], dtype=torch.float32, device=device)
+        
+        advantages = self.compute_advantages(rewards, values.detach(), dones)
+        returns = advantages + values
+        
+        # Forward pass
+        logits, new_values = self.policy(obs)
+        dist = Categorical(logits=logits)
+        new_logprobs = dist.log_prob(actions)
+        entropy = dist.entropy().mean()
+        
+        ratio = (new_logprobs - old_logprobs).exp()
+        
+        # Pérdidas
+        policy_loss1 = ratio * advantages
+        policy_loss2 = torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * advantages
+        policy_loss = -torch.min(policy_loss1, policy_loss2).mean()
+        
+        returns = (returns - returns.mean()) / (returns.std() + 1e-8)
+        value_loss = 0.5 * (returns - new_values.squeeze()).pow(2).mean()
+        
+        # Pérdida total
+        loss = policy_loss + value_loss - self.entropy_coef * entropy
+        
+        # Backpropagation
+        self.policy_optim.zero_grad()
+        self.reward_optim.zero_grad()
+
+        # scalar_reward = trajectories['rewards'][0]
+        # print(f"scalar_reward.requires_grad: {scalar_reward.requires_grad}")
+        # print(f"scalar_reward.grad_fn: {scalar_reward.grad_fn}")
+        
+        loss.backward()
+        
+        # Verificación de gradientes
+        print("\n" + "="*50)
+        print("GRADIENTES EN REWARD NETWORK:")
+        any_reward_grad = False
+        for name, param in self.reward_net.named_parameters():
+            if param.grad is not None:
+                print(f"{name:20} grad_mean: {param.grad.abs().mean().item():.10f}")
+                any_reward_grad = True
+            else:
+                print(f"{name:20} SIN GRADIENTES")
+        
+        print("\nGRADIENTES EN POLICY NETWORK:")
+        for name, param in self.policy.named_parameters():
+            if param.grad is not None:
+                print(f"{name:20} grad_mean: {param.grad.abs().mean().item():.10f}")
+            else:
+              print(f'{name:20} SIN GRADIENTES')
+        print("="*50 + "\n")
+
+        print(f"Advantages mean: {advantages.mean().item():.5f}, std: {advantages.std().item():.5f}")
+        
+        # Gradient clipping
+        torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 5.0)
+        torch.nn.utils.clip_grad_norm_(self.reward_net.parameters(), 5.0)
+        
+        self.policy_optim.step()
+        self.reward_optim.step()
+
+        # with torch.no_grad():
+        #   value_error = (returns - new_values.squeeze()).abs()
+        #   print(f"Policy loss: {policy_loss.item():.5f}")
+        #   print(f"Value loss: {value_loss.item():.5f}")
+        #   print(f"Mean |V - R|: {value_error.mean().item():.5f}")
+        #   print(f"Value predictions: mean={new_values.mean().item():.3f}, std={new_values.std().item():.3f}")
+        #   print(f"Returns: mean={returns.mean().item():.3f}, std={returns.std().item():.3f}")
+
+        return loss.item()
 
     def train(self, episodes, max_steps=1000, save_path='ppo_reward_model.pt'):
         best_reward = float('-inf')
@@ -196,11 +209,16 @@ class PPOTrainer:
                 
                 next_obs, reward_vector, done, _, _ = self.env.step(action.cpu().numpy().item())
                 
-                # print(reward_vector)
-                # print(reward_vector.mean())
-                # Transformar vector de reward a escalar
-                reward_tensor = torch.FloatTensor(reward_vector).to(device)
-                scalar_reward = self.reward_net(reward_tensor)
+                # Transformar vector de reward a escalar manteniendo el grafo
+                reward_vector_tensor = torch.FloatTensor(reward_vector).to(device).requires_grad_(True)
+                learned_reward = self.reward_net(reward_vector_tensor)
+                
+                # Calcular componentes manteniendo el grafo
+                heuristic_reward = reward_vector_tensor.mean()
+                alpha_tensor = torch.tensor(alpha, dtype=torch.float32, device=device).requires_grad_(True)
+                
+                # Combinación convexa
+                scalar_reward = alpha_tensor * learned_reward + (1 - alpha_tensor) * heuristic_reward
                 
                 # Guardar transición
                 trajectories['obs'].append(obs_tensor)
