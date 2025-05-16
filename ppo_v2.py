@@ -8,7 +8,7 @@ from tqdm import tqdm
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class PolicyNetwork(nn.Module):
-    """Red PPO estándar con actor y crítico"""
+    """Red PPO estándar con actor y crítico con escala y sesgo aprendibles"""
     def __init__(self, obs_dim, act_dim):
         super().__init__()
         self.shared_net = nn.Sequential(
@@ -17,11 +17,13 @@ class PolicyNetwork(nn.Module):
             nn.Linear(256, 256),
             nn.ReLU()
         )
+
         self.actor = nn.Sequential(
             nn.Linear(256, 128),
             nn.ReLU(),
             nn.Linear(128, act_dim)
         )
+
         self.critic = nn.Sequential(
             nn.Linear(256, 256),
             nn.ReLU(),
@@ -30,10 +32,19 @@ class PolicyNetwork(nn.Module):
             nn.Linear(128, 1)
         )
 
+        # Parámetros aprendibles para escalar y desplazar la predicción del crítico
+        self.critic_scale = nn.Parameter(torch.tensor(1.0))  # Escala inicial
+        self.critic_bias = nn.Parameter(torch.tensor(0.0))   # Desplazamiento inicial
 
     def forward(self, x):
         shared_features = self.shared_net(x)
-        return self.actor(shared_features), self.critic(shared_features)
+        logits = self.actor(shared_features)
+        raw_value = self.critic(shared_features).squeeze(-1)
+
+        # Aplicar escala y sesgo aprendibles al valor del crítico
+        scaled_value = raw_value * self.critic_scale + self.critic_bias
+
+        return logits, scaled_value
 
     def get_action(self, obs):
         logits, value = self.forward(obs)
@@ -41,6 +52,7 @@ class PolicyNetwork(nn.Module):
         action = dist.sample()
         logprob = dist.log_prob(action)
         return action, logprob, value.squeeze()
+
 
 class RewardTransformer(nn.Module):
     """Red que transforma vectores de reward en escalares con mecanismo de atención"""
@@ -120,6 +132,7 @@ class PPOTrainer:
         dones = torch.tensor(trajectories['dones'], dtype=torch.float32, device=device)
         
         advantages = self.compute_advantages(rewards, values.detach(), dones)
+        # advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         returns = advantages + values
         
         # Forward pass
@@ -135,7 +148,7 @@ class PPOTrainer:
         policy_loss2 = torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * advantages
         policy_loss = -torch.min(policy_loss1, policy_loss2).mean()
         
-        returns = (returns - returns.mean()) / (returns.std() + 1e-8)
+        # returns = (returns - returns.mean()) / (returns.std() + 1e-8)
         value_loss = 0.5 * (returns - new_values.squeeze()).pow(2).mean()
         
         # Pérdida total
@@ -151,6 +164,9 @@ class PPOTrainer:
         
         loss.backward()
         
+        print(f"critic_scale grad: {self.policy.critic_scale.grad}")
+        print(f"critic_bias grad: {self.policy.critic_bias.grad}")
+
         # Verificación de gradientes
         print("\n" + "="*50)
         print("GRADIENTES EN REWARD NETWORK:")
@@ -203,7 +219,7 @@ class PPOTrainer:
             }
             episode_rewards = []
             
-            for _ in range(max_steps):
+            for t in range(max_steps):
                 obs_tensor = torch.FloatTensor(obs).to(device)
                 action, logprob, value = self.policy.get_action(obs_tensor)
                 
@@ -214,11 +230,11 @@ class PPOTrainer:
                 learned_reward = self.reward_net(reward_vector_tensor)
                 
                 # Calcular componentes manteniendo el grafo
-                heuristic_reward = reward_vector_tensor.mean()
-                alpha_tensor = torch.tensor(alpha, dtype=torch.float32, device=device).requires_grad_(True)
+                heuristic_reward = reward_vector_tensor.mean().detach()
+                alpha_tensor = torch.tensor(alpha, dtype=torch.float32, device=device)
                 
                 # Combinación convexa
-                scalar_reward = alpha_tensor * learned_reward + (1 - alpha_tensor) * heuristic_reward
+                scalar_reward = (1 - alpha_tensor) * learned_reward + alpha_tensor * heuristic_reward
                 
                 # Guardar transición
                 trajectories['obs'].append(obs_tensor)
@@ -239,15 +255,15 @@ class PPOTrainer:
             alpha = max(alpha - alpha_decay, min_alpha)
             
             # Guardar mejor modelo
-            mean_episode_reward = np.mean(episode_rewards)
-            if mean_episode_reward > best_reward:
+            mean_episode_reward = np.sum(episode_rewards)
+            if mean_episode_reward >= best_reward:
                 best_reward = mean_episode_reward
                 torch.save({
                     'policy_state_dict': self.policy.state_dict(),
                     'reward_state_dict': self.reward_net.state_dict()
                 }, save_path)
             
-            print(f"Episode {episode}, Loss: {loss:.4f}, Reward: {mean_episode_reward:.2f}, Best: {best_reward:.2f}, Alpha:{alpha:.2f}")
+            print(f"Episode {episode}, Loss: {loss:.4f}, Reward: {mean_episode_reward:.2f}, Best: {best_reward:.2f}, Alpha:{alpha:.2f}, Episode length: {t}")
 
 # Uso:
 # env = TuEntorno()
