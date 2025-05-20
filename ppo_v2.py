@@ -33,8 +33,9 @@ class PolicyNetwork(nn.Module):
         )
 
         # Parámetros aprendibles para escalar y desplazar la predicción del crítico
-        self.critic_scale = nn.Parameter(torch.tensor(1.0))  # Escala inicial
+        self.critic_scale = nn.Parameter(torch.tensor(0.1))  # Escala inicial
         self.critic_bias = nn.Parameter(torch.tensor(0.0))   # Desplazamiento inicial
+        self.log_temperature = nn.Parameter(torch.tensor(0.0))  # log(T) para asegurar que T > 0
 
     def forward(self, x):
         shared_features = self.shared_net(x)
@@ -42,13 +43,17 @@ class PolicyNetwork(nn.Module):
         raw_value = self.critic(shared_features).squeeze(-1)
 
         # Aplicar escala y sesgo aprendibles al valor del crítico
-        scaled_value = raw_value * self.critic_scale + self.critic_bias
-
-        return logits, scaled_value
+        scaled_value = raw_value * torch.clamp(self.critic_scale, 0.01, 10.0) + self.critic_bias
+        temperature = torch.exp(self.log_temperature).clamp(min=0.01, max=10.0)
+        scaled_logits = logits / temperature
+        
+        return scaled_logits, scaled_value
 
     def get_action(self, obs):
         logits, value = self.forward(obs)
-        dist = Categorical(logits=logits)
+        temperature = torch.exp(self.log_temperature).clamp(min=0.01, max=10.0)
+        scaled_logits = logits / temperature
+        dist = Categorical(logits=scaled_logits)
         action = dist.sample()
         logprob = dist.log_prob(action)
         return action, logprob, value.squeeze()
@@ -74,7 +79,7 @@ class RewardTransformer(nn.Module):
         return self.value_head(weighted_rewards).squeeze() * self.reward_scale + self.reward_bias
 
 class PPOTrainer:
-    def __init__(self, env, lr_policy=3e-4, lr_reward=1e-3, gamma=0.99, lam=0.95, clip_ratio=0.3):
+    def __init__(self, env, lr_policy=3e-4, lr_reward=1e-3, gamma=0.99, lam=0.95, clip_ratio=0.2):
         self.env = env
         self.obs_dim = env.observation_space.shape[0]
         self.act_dim = env.action_space.n
@@ -152,7 +157,7 @@ class PPOTrainer:
         value_loss = 0.5 * (returns - new_values.squeeze()).pow(2).mean()
         
         # Pérdida total
-        loss = policy_loss + value_loss - self.entropy_coef * entropy
+        loss = policy_loss + 0.5 * value_loss - self.entropy_coef * entropy
         
         # Backpropagation
         self.policy_optim.zero_grad()
@@ -161,12 +166,23 @@ class PPOTrainer:
         # scalar_reward = trajectories['rewards'][0]
         # print(f"scalar_reward.requires_grad: {scalar_reward.requires_grad}")
         # print(f"scalar_reward.grad_fn: {scalar_reward.grad_fn}")
+
+        with torch.no_grad():
+            print("\n--- DIAGNÓSTICO PPO ---")
+            print(f"Policy loss       : {policy_loss.item():.6f}")
+            print(f"Value loss        : {value_loss.item():.6f}")
+            print(f"Total loss        : {loss.item():.6f}")
+            print(f"Entropy           : {entropy.item():.6f}")
+            print(f"Logits mean/std   : {logits.mean().item():.3f} / {logits.std().item():.3f}")
+            print(f"Temperature       : {torch.exp(self.policy.log_temperature).item():.4f}")
+            print(f"Value pred mean/std : {new_values.mean().item():.3f} / {new_values.std().item():.3f}")
+            print(f"Returns mean/std  : {returns.mean().item():.3f} / {returns.std().item():.3f}")
+            print(f"Advantage mean/std: {advantages.mean().item():.3f} / {advantages.std().item():.3f}")
+            print(f"Reward mean/std   : {rewards.mean().item():.3f} / {rewards.std().item():.3f}")
+            print("--- FIN DIAGNÓSTICO ---\n")
         
         loss.backward()
         
-        print(f"critic_scale grad: {self.policy.critic_scale.grad}")
-        print(f"critic_bias grad: {self.policy.critic_bias.grad}")
-
         # Verificación de gradientes
         print("\n" + "="*50)
         print("GRADIENTES EN REWARD NETWORK:")
@@ -185,8 +201,6 @@ class PPOTrainer:
             else:
               print(f'{name:20} SIN GRADIENTES')
         print("="*50 + "\n")
-
-        print(f"Advantages mean: {advantages.mean().item():.5f}, std: {advantages.std().item():.5f}")
         
         # Gradient clipping
         torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 5.0)
@@ -210,6 +224,7 @@ class PPOTrainer:
         alpha = 1.0
         min_alpha = 0.0
         alpha_decay = (alpha - min_alpha) / episodes
+        episode_lengths = []
         
         for episode in range(episodes):
             obs, _ = self.env.reset()
@@ -230,11 +245,12 @@ class PPOTrainer:
                 learned_reward = self.reward_net(reward_vector_tensor)
                 
                 # Calcular componentes manteniendo el grafo
-                heuristic_reward = reward_vector_tensor.mean().detach()
-                alpha_tensor = torch.tensor(alpha, dtype=torch.float32, device=device)
+                # heuristic_reward = reward_vector_tensor.mean().detach()
+                # alpha_tensor = torch.tensor(alpha, dtype=torch.float32, device=device)
                 
                 # Combinación convexa
-                scalar_reward = (1 - alpha_tensor) * learned_reward + alpha_tensor * heuristic_reward
+                # scalar_reward = (1 - alpha_tensor) * learned_reward + alpha_tensor * heuristic_reward
+                scalar_reward = learned_reward
                 
                 # Guardar transición
                 trajectories['obs'].append(obs_tensor)
@@ -246,6 +262,7 @@ class PPOTrainer:
                 
                 obs = next_obs
                 episode_rewards.append(sum(reward_vector))
+                episode_lengths.append(t)
                 
                 if done:
                     break
@@ -263,7 +280,8 @@ class PPOTrainer:
                     'reward_state_dict': self.reward_net.state_dict()
                 }, save_path)
             
-            print(f"Episode {episode}, Loss: {loss:.4f}, Reward: {mean_episode_reward:.2f}, Best: {best_reward:.2f}, Alpha:{alpha:.2f}, Episode length: {t}")
+            print(f"Episode {episode}, Loss: {loss:.4f}, Reward: {mean_episode_reward:.2f}, Best: {best_reward:.2f}, Alpha:{alpha:.2f}")
+            print(f"Episode length: {t}, Mean episode length: {np.mean(episode_lengths)}")
 
 # Uso:
 # env = TuEntorno()
