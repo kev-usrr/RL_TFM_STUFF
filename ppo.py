@@ -1,193 +1,130 @@
-# PPO desde cero con PyTorch y reward diferenciable
-
+import gymnasium as gym
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+from collections import deque
 
-from tqdm import tqdm
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# --- 1. Política (actor) y value function (crítico) ---
-
-class PolicyNetwork(nn.Module):
+class PPOActorCritic(nn.Module):
     def __init__(self, obs_dim, act_dim):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(obs_dim, 256), nn.ReLU(),
-            nn.Linear(256, 256), nn.ReLU(),
-            nn.Linear(256, 128), nn.ReLU(),
-            nn.Linear(128, 64), nn.ReLU()
+        self.shared = nn.Sequential(
+            nn.Linear(obs_dim, 64),
+            nn.Tanh(),
+            nn.Linear(64, 64),
+            nn.Tanh()
         )
-        self.actor = nn.Linear(64, act_dim)
-        self.critic = nn.Linear(64, 1)
+        self.policy = nn.Linear(64, act_dim)
+        self.value = nn.Linear(64, 1)
 
-    def forward(self, obs):
-        x = self.net(obs)
-        return self.actor(x), self.critic(x)
-
-    def get_action(self, obs):
-        logits, value = self.forward(obs)
-        dist = torch.distributions.Categorical(logits=logits)
-        action = dist.sample()
-        logprob = dist.log_prob(action)
-        return action, logprob, value.squeeze()
-
-# --- 2. Red de agregación de reward ---
-
-class RewardAggregator(nn.Module):
-    def __init__(self, num_agents):
-        super().__init__()
-        self.attention = nn.Sequential(
-            nn.Linear(num_agents, 64),
-            nn.ReLU(),
-            nn.Linear(64, num_agents),
-            nn.Softmax(dim=-1)
-        )
-        self.value = nn.Linear(num_agents, 1)
-        
-    def forward(self, reward_vector):
-        weights = self.attention(reward_vector)
-        weighted_rewards = weights * reward_vector
-        return self.value(weighted_rewards).squeeze()
-
-# --- 3. Entrenamiento PPO simplificado ---
-
-def baseline_reward_fn(reward_vector):
-    return reward_vector.mean()
+    def forward(self, x):
+        features = self.shared(x)
+        logits = self.policy(features)
+        value = self.value(features)
+        return logits, value
 
 
-def compute_advantages(rewards, values, gamma=0.99, lam=0.95):
+def compute_returns(rewards, dones, values, gamma=0.99, lam=0.95):
     advantages = []
     gae = 0
-    next_value = 0
-    for step in reversed(range(len(rewards))):
-        delta = rewards[step] + gamma * next_value - values[step]
-        gae = delta + gamma * lam * gae
-        advantages.insert(0, gae.clone())
-        next_value = values[step]
-    return torch.stack(advantages)
+    values = values + [0]
+    for t in reversed(range(len(rewards))):
+        delta = rewards[t] + gamma * values[t + 1] * (1 - dones[t]) - values[t]
+        gae = delta + gamma * lam * (1 - dones[t]) * gae
+        advantages.insert(0, gae)
+    returns = [a + v for a, v in zip(advantages, values[:-1])]
+    return advantages, returns
 
 
-def ppo_update(policy, reward_model, policy_optimizer, reward_optimizer, trajectories, clip_ratio=0.2):
-    obs = torch.stack(trajectories['obs'])
-    act = torch.stack(trajectories['actions'])
-    logp_old = torch.stack(trajectories['logprobs'])
-    returns = trajectories['returns']
-    advs = trajectories['advantages']
+def ppo(env, total_timesteps=100_000, update_timesteps=2000,
+        epochs=10, minibatch_size=64, clip_eps=0.2, gamma=0.99, lam=0.95, lr=3e-4):
 
-    logits, values = policy(obs)
-    dist = torch.distributions.Categorical(logits=logits)
-    logp = dist.log_prob(act)
-    ratio = torch.exp(logp - logp_old)
-
-    # PPO clipped surrogate loss
-    clip_adv = torch.clamp(ratio, 1 - clip_ratio, 1 + clip_ratio) * advs
-    policy_loss = -(torch.min(ratio * advs, clip_adv)).mean()
-    value_loss = ((returns - values.squeeze()) ** 2).mean()
-
-    # Total loss (policy + critic + reward net)
-    entropy = dist.entropy().mean()
-    loss = policy_loss + 0.5 * value_loss - 0.01 * entropy
-
-    # Backpropagation con dos optimizadores
-    policy_optimizer.zero_grad()
-    reward_optimizer.zero_grad()
-    loss.backward()
-
-    # Monitorizar normas de gradientes
-    policy_grad_norm = torch.norm(torch.stack([torch.norm(p.grad) for p in policy.parameters() if p.grad is not None]))
-    reward_grad_norm = torch.norm(torch.stack([torch.norm(p.grad) for p in reward_model.parameters() if p.grad is not None]))
-    print(f"Policy grad norm: {policy_grad_norm:.4f}, Reward grad norm: {reward_grad_norm:.4f}")
-    
-    # Gradient clipping opcional pero recomendado
-    torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=0.5)
-    torch.nn.utils.clip_grad_norm_(reward_model.parameters(), max_norm=0.5)
-    
-    policy_optimizer.step()
-    reward_optimizer.step()
-
-    return loss.item()
-
-# --- 5. Entrenamiento principal ---
-
-def train_ppo(env, n_episodes=1_000, max_timesteps=10_000, file_name='ppo.pt'):
     obs_dim = env.observation_space.shape[0]
     act_dim = env.action_space.n
-    num_agents = env.num_agents
-    best_model = None
-    best_mean_rew = float('-inf')
 
-    policy = PolicyNetwork(obs_dim, act_dim)
-    reward_model = RewardAggregator(num_agents)
+    model = PPOActorCritic(obs_dim, act_dim)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
 
-    policy_optimizer = optim.Adam(policy.parameters(), lr=3e-4)
-    reward_optimizer = optim.Adam(reward_model.parameters(), lr=1e-3)
+    obs, _ = env.reset()
+    observations, actions, logprobs, rewards, dones, values = [], [], [], [], [], []
+    ep_rewards = []
+    reward_buffer = deque(maxlen=100)
 
-    alpha = 1.0
-    min_alpha = 0.0
-    alpha_decay = (alpha - min_alpha) / n_episodes
+    policy_loss_val, value_loss_val = None, None  # inicialización
 
-    for episode in range(n_episodes):
-        obs, _ = env.reset()
-        # print(obs.dtype)
-        trajectories = {'obs': [], 'actions': [], 'logprobs': [], 'rewards': [], 'values': []}
+    for timestep in range(1, total_timesteps + 1):
+        obs_tensor = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
+        logits, value = model(obs_tensor)
+        probs = torch.distributions.Categorical(logits=logits)
+        action = probs.sample()
 
-        all_rewards = []
-        for t in tqdm(range(max_timesteps)):
-            # obs_tensor = obs.float()
-            obs_tensor = torch.from_numpy(obs).float()
-            action, logprob, value = policy.get_action(obs_tensor)
-            new_obs, reward_vector, done, _, _ = env.step(int(action.item()))
-            all_rewards.append(reward_vector)
-            
-            if len(new_obs) == 0:
-                new_obs = np.zeros(shape=(obs_dim, ))
-            reward_vector_tensor = torch.tensor(reward_vector, dtype=torch.float32, requires_grad=True)
-            learned_reward = reward_model(reward_vector_tensor)
+        next_obs, reward, terminated, truncated, _ = env.step(action.item())
+        done = terminated or truncated
 
-            heuristic_reward = torch.tensor(baseline_reward_fn(reward_vector), dtype=torch.float32, requires_grad=False)
-            alpha_tensor = torch.tensor(alpha, dtype=torch.float32)
-            
-            scalar_reward = alpha_tensor * learned_reward + (1 - alpha_tensor) * heuristic_reward
+        observations.append(obs)
+        actions.append(action.item())
+        logprobs.append(probs.log_prob(action).item())
+        rewards.append(reward)
+        dones.append(done)
+        values.append(value.item())
 
-            # print(reward_vector, scalar_reward)
+        obs = next_obs
+        ep_rewards.append(reward)
 
-            trajectories['obs'].append(obs_tensor)
-            trajectories['actions'].append(action)
-            trajectories['logprobs'].append(logprob)
-            trajectories['rewards'].append(scalar_reward)
-            trajectories['values'].append(value)
+        if done:
+            reward_sum = sum(ep_rewards)
+            reward_buffer.append(reward_sum)
+            ep_rewards = []
+            obs, _ = env.reset()
 
-            obs = new_obs
-            if done:
-                break
+        if timestep % update_timesteps == 0:
+            obs_tensor = torch.tensor(observations, dtype=torch.float32)
+            act_tensor = torch.tensor(actions)
+            old_logprobs = torch.tensor(logprobs)
 
-        rewards = torch.stack(trajectories['rewards'])
-        values = torch.stack(trajectories['values'])
-        advantages = compute_advantages(rewards, values)
-        returns = (advantages + values)
+            with torch.no_grad():
+                _, values_tensor = model(obs_tensor)
 
-        trajectories['advantages'] = advantages
-        trajectories['returns'] = returns
+            advs, returns = compute_returns(rewards, dones, values, gamma, lam)
+            advs = torch.tensor(advs, dtype=torch.float32)
+            returns = torch.tensor(returns, dtype=torch.float32)
 
-        loss_val = ppo_update(policy, reward_model, policy_optimizer, reward_optimizer, trajectories)
-        alpha = max(alpha - alpha_decay, min_alpha)
+            advs = (advs - advs.mean()) / (advs.std() + 1e-8)
 
-        last_rew_mean = np.sum(np.array(all_rewards))
-        if last_rew_mean > best_mean_rew:
-            best_mean_rew = last_rew_mean
-            print(f'Best mean reward reached: {best_mean_rew}')
-            best_model = {
-                'policy_state_dict': policy.state_dict(),
-                'reward_model_state_dict': reward_model.state_dict()
-            }
+            for _ in range(epochs):
+                idxs = np.random.permutation(len(observations))
+                for i in range(0, len(observations), minibatch_size):
+                    batch_idx = idxs[i:i + minibatch_size]
+                    batch_obs = obs_tensor[batch_idx]
+                    batch_act = act_tensor[batch_idx]
+                    batch_old_logprob = old_logprobs[batch_idx]
+                    batch_adv = advs[batch_idx]
+                    batch_ret = returns[batch_idx]
 
-        # if episode % 100 == 0:
-        print(f"Episode {episode}, Loss: {loss_val}, Rewards mean: {last_rew_mean}")
+                    logits, value = model(batch_obs)
+                    dist = torch.distributions.Categorical(logits=logits)
+                    logprob = dist.log_prob(batch_act)
+                    ratio = torch.exp(logprob - batch_old_logprob)
 
-    if best_model is not None:
-        torch.save(best_model, file_name)
-        print(f"Mejor modelo guardado con mean reward {best_mean_rew:.4f}")
+                    policy_loss = -torch.min(ratio * batch_adv,
+                                             torch.clamp(ratio, 1 - clip_eps, 1 + clip_eps) * batch_adv).mean()
+                    value_loss = ((value.squeeze() - batch_ret) ** 2).mean()
+                    loss = policy_loss + 0.5 * value_loss
+
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+
+                    policy_loss_val = policy_loss.item()
+                    value_loss_val = value_loss.item()
+
+            avg_reward = np.mean(reward_buffer) if reward_buffer else 0
+            print(f"Step {timestep} | Avg Reward (last 100 eps): {avg_reward:.2f} "
+                  f"| Policy Loss: {policy_loss_val:.4f} | Value Loss: {value_loss_val:.4f}")
+
+            # Limpiar buffer de batch
+            observations, actions, logprobs, rewards, dones, values = [], [], [], [], [], []
+
+    env.close()
+    print("Entrenamiento PPO finalizado.")
 
