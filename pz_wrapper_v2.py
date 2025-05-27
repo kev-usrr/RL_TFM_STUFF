@@ -16,7 +16,10 @@ class SupervisorWrapper(gym.Env):
     metadata = {'render_modes': ['human'],
                 'image_based_environments': ['cooperative_pong', 'knights_archers_zombies', 'pistonball', 'entombed_cooperative']}
 
-    def __init__(self, pz_env: AECEnv, aggregation_method='sum'):
+    def __init__(self, pz_env: AECEnv, 
+                 aggregation_method='sum',
+                 alpha=0.5,
+                 tau=1.0):
         super().__init__()
         self.env = pz_env
         self.env.reset()
@@ -81,10 +84,24 @@ class SupervisorWrapper(gym.Env):
         # Espacios de observación que también será dinámico. En cada timestep pasamos al del siguiente agente
         self.observation_space = self.observation_spaces[self.env.possible_agents[self.current_agent_idx]]
 
+        self.alpha = alpha
+        self.tau   = tau
+        # self.min_reward_seen = float('inf')
+        # self.recent_rewards  = []
+        self.ema_alpha = 0.1  # cuánto actualiza el promedio exponencial
+        self.min_r = None
+        self.max_r = None
+
         if aggregation_method == 'sum':
           self.agg_func = self.__reward_sum
         elif aggregation_method == 'expmean':
           self.agg_func = self.__reward_expmean
+        elif aggregation_method == 'min':
+          self.agg_func = self.__reward_min
+        elif aggregation_method == 'softmin':
+          self.agg_func = self.__reward_softmin
+        elif aggregation_method == 'softmin_noshift':
+          self.agg_func = self.__reward_softmin_noshift
 
 
     def __reward_sum(self, rewards):
@@ -94,6 +111,44 @@ class SupervisorWrapper(gym.Env):
     def __reward_expmean(self, rewards):
       return (np.exp(np.mean(rewards))) ** (1 / len(rewards))
     
+
+    def __reward_min(self, rewards):
+      return np.min(rewards)
+
+
+    def __reward_softmin(self, rewards):
+      rewards = np.array(rewards)
+
+      # Paso 1: combinación softmin + media
+      softmin = -np.log(np.sum(np.exp(-rewards / self.tau))) * self.tau
+      mean_reward = np.mean(rewards)
+      reward = self.alpha * softmin + (1 - self.alpha) * mean_reward
+
+      # Paso 2: actualización de estadísticas exponenciales
+      if self.min_r is None or self.max_r is None:
+          self.min_r = reward
+          self.max_r = reward
+      else:
+          self.min_r = min(self.min_r, reward)
+          self.max_r = max(self.max_r, reward)
+
+          # Opción más suave (EMA):
+          self.min_r = (1 - self.ema_alpha) * self.min_r + self.ema_alpha * reward if reward < self.min_r else self.min_r
+          self.max_r = (1 - self.ema_alpha) * self.max_r + self.ema_alpha * reward if reward > self.max_r else self.max_r
+
+      # Paso 3: normalización en [0, 1]
+      norm_range = self.max_r - self.min_r + 1e-8  # evita división por cero
+      normalized_reward = (reward - self.min_r) / norm_range
+
+      return normalized_reward
+
+    def __reward_softmin_noshift(self, rewards):
+        rewards = np.array(rewards)
+        
+        softmin = -np.log(np.sum(np.exp(-rewards / self.tau))) * self.tau
+        mean_reward = np.mean(rewards)
+        
+        return self.alpha * softmin + (1 - self.alpha) * mean_reward
     
     def __get_flatten_shape(self, tensor_shape):
       ret = 1
@@ -135,11 +190,21 @@ class SupervisorWrapper(gym.Env):
 
         # Acumulamos el reward sumando sobre el reward de todos los agentes
         tot_reward = self.agg_func(rewards)
+        # print(f'REWARDS: {rewards}')
+        # print(f'TOT REWARD: {tot_reward}')
         # tot_reward = sum(rewards)
 
         # Determinamos si debemos parar la ejecución
         done = all(terminations) or all(truncations)
         if done:
+          rendered_frame = self.render()
+
+          # Mostrar o guardar el frame si no es None
+          if rendered_frame is not None:
+            print(f'\nREWARDS PLOT: {rewards}')
+            print(f'TOT REWARD PLOT: {tot_reward}\n')
+            plt.imshow(rendered_frame)
+            plt.show()
           return [], tot_reward, done, False, {}
         return self._get_observations(), tot_reward, done, False, {}
 
@@ -215,3 +280,7 @@ class SupervisorWrapper(gym.Env):
           embedding = self.model(image_tensor)
 
       return embedding.view(-1).cpu().numpy()
+  
+    # Encaminamos todo lo demás al entorno original
+    def __getattr__(self, name):
+        return getattr(self.env, name)
