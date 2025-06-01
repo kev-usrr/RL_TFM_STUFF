@@ -60,9 +60,15 @@ def ppo(env, total_timesteps=100_000, update_timesteps=2000,
         model = PPOActorCritic(obs_dim, act_dim)
     
     optimizer = optim.Adam(model.parameters(), lr=lr)
-    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-    #     optimizer, T_max=1_000_000, eta_min=1e-6
-    # )
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode='max',
+        factor=0.5,
+        patience=5,
+        threshold=0.01,
+        min_lr=1e-6,
+        verbose=True
+    )
 
     obs, _ = env.reset()
     observations, actions, logprobs, rewards, dones, values = [], [], [], [], [], []
@@ -145,10 +151,11 @@ def ppo(env, total_timesteps=100_000, update_timesteps=2000,
                     value_loss_val = value_loss.item()
 
             avg_reward = np.mean(reward_buffer) if reward_buffer else 0
+            scheduler.step(avg_reward)
             print(f"Step {timestep} | Avg Reward (last 100 eps): {avg_reward:.2f} "
                   f"| Policy Loss: {policy_loss_val:.4f} | Value Loss: {value_loss_val:.4f} "
-                #   f"| LR: {scheduler.get_last_lr()[0]:.6f} | Entropy: {entropy.item():.4f} "
-                  f"| Entropy Coef: {current_entropy_coef:.6f} | Entropy: {entropy.item():.4f}")
+                  f"| LR: {optimizer.param_groups[0]['lr']:.6f} | Entropy: {entropy.item():.4f} "
+                  f"| Entropy Coef: {current_entropy_coef:.6f}")
 
             # Reset buffers
             observations, actions, logprobs, rewards, dones, values = [], [], [], [], [], []
