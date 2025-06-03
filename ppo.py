@@ -3,7 +3,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+import pandas as pd
+
 from collections import deque
+from tqdm import tqdm
+
+# Detectar GPU
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Usando dispositivo: {device}")
 
 class PPOActorCritic(nn.Module):
     def __init__(self, obs_dim, act_dim):
@@ -33,7 +40,6 @@ class PPOActorCritic(nn.Module):
         value = self.value(features)
         return logits, value
 
-
 def compute_returns(rewards, dones, values, gamma=0.99, lam=0.95):
     advantages = []
     gae = 0
@@ -45,12 +51,12 @@ def compute_returns(rewards, dones, values, gamma=0.99, lam=0.95):
     returns = [a + v for a, v in zip(advantages, values[:-1])]
     return advantages, returns
 
-
 def ppo(env, total_timesteps=100_000, update_timesteps=2000,
         epochs=10, minibatch_size=64, clip_eps=0.2, gamma=0.99, lam=0.95, lr=3e-4,
         initial_entropy_coef=0.01, final_entropy_coef=0.001,
-        model=None):
+        model=None, idx=0):
 
+    logs = []
     entropy_decay_steps = total_timesteps
 
     obs_dim = env.observation_space.shape[0]
@@ -58,13 +64,14 @@ def ppo(env, total_timesteps=100_000, update_timesteps=2000,
 
     if model is None:
         model = PPOActorCritic(obs_dim, act_dim)
-    
+
+    model.to(device)  # Mover modelo a GPU
     optimizer = optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
         mode='max',
         factor=0.5,
-        patience=5,
+        patience=20,
         threshold=0.01,
         min_lr=1e-6,
         verbose=True
@@ -77,8 +84,8 @@ def ppo(env, total_timesteps=100_000, update_timesteps=2000,
 
     policy_loss_val, value_loss_val = None, None
 
-    for timestep in range(1, total_timesteps + 1):
-        obs_tensor = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
+    for timestep in tqdm(range(1, total_timesteps + 1)):
+        obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
         logits, value = model(obs_tensor)
         probs = torch.distributions.Categorical(logits=logits)
         action = probs.sample()
@@ -103,19 +110,18 @@ def ppo(env, total_timesteps=100_000, update_timesteps=2000,
             obs, _ = env.reset()
 
         if timestep % update_timesteps == 0:
-            obs_tensor = torch.tensor(np.array(observations), dtype=torch.float32)
-            act_tensor = torch.tensor(actions)
-            old_logprobs = torch.tensor(logprobs)
+            obs_tensor = torch.tensor(np.array(observations), dtype=torch.float32, device=device)
+            act_tensor = torch.tensor(actions, device=device)
+            old_logprobs = torch.tensor(logprobs, device=device)
 
             with torch.no_grad():
                 _, values_tensor = model(obs_tensor)
 
             advs, returns = compute_returns(rewards, dones, values, gamma, lam)
-            advs = torch.tensor(advs, dtype=torch.float32)
-            returns = torch.tensor(returns, dtype=torch.float32)
+            advs = torch.tensor(advs, dtype=torch.float32, device=device)
+            returns = torch.tensor(returns, dtype=torch.float32, device=device)
             advs = (advs - advs.mean()) / (advs.std() + 1e-8)
 
-            # Linearly annealed entropy coefficient
             current_entropy_coef = final_entropy_coef + (initial_entropy_coef - final_entropy_coef) * \
                                    max(0, (entropy_decay_steps - timestep) / entropy_decay_steps)
 
@@ -156,12 +162,22 @@ def ppo(env, total_timesteps=100_000, update_timesteps=2000,
                   f"| Policy Loss: {policy_loss_val:.4f} | Value Loss: {value_loss_val:.4f} "
                   f"| LR: {optimizer.param_groups[0]['lr']:.6f} | Entropy: {entropy.item():.4f} "
                   f"| Entropy Coef: {current_entropy_coef:.6f}")
+            logs.append({
+                'timestep': timestep,
+                'avg_reward': avg_reward,
+                'policy_loss': policy_loss_val,
+                'value_loss': value_loss_val,
+                'entropy': entropy.item(),
+                'entropy_coef': current_entropy_coef,
+                'lr': optimizer.param_groups[0]['lr']
+            })
 
-            # Reset buffers
+
             observations, actions, logprobs, rewards, dones, values = [], [], [], [], [], []
-
-        # scheduler.step()
 
     env.close()
     print("Entrenamiento PPO finalizado.")
+    # Exportar log como CSV
+    log_df = pd.DataFrame(logs)
+    log_df.to_csv(f"ppo_training_log_{idx}.csv", index=False)
     return model, avg_reward
