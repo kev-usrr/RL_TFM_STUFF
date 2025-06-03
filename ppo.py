@@ -81,6 +81,9 @@ def ppo(env, total_timesteps=100_000, update_timesteps=2000,
     observations, actions, logprobs, rewards, dones, values = [], [], [], [], [], []
     ep_rewards = []
     reward_buffer = deque(maxlen=100)
+    best_avg_reward = -float('inf')
+    best_model_state = None
+
 
     policy_loss_val, value_loss_val = None, None
 
@@ -157,6 +160,11 @@ def ppo(env, total_timesteps=100_000, update_timesteps=2000,
                     value_loss_val = value_loss.item()
 
             avg_reward = np.mean(reward_buffer) if reward_buffer else 0
+            # Guardar mejor modelo hasta ahora
+            if avg_reward > best_avg_reward:
+                best_avg_reward = avg_reward
+                best_model_state = model.state_dict()
+
             scheduler.step(avg_reward)
             print(f"Step {timestep} | Avg Reward (last 100 eps): {avg_reward:.2f} "
                   f"| Policy Loss: {policy_loss_val:.4f} | Value Loss: {value_loss_val:.4f} "
@@ -177,7 +185,13 @@ def ppo(env, total_timesteps=100_000, update_timesteps=2000,
 
     env.close()
     print("Entrenamiento PPO finalizado.")
+    
     # Exportar log como CSV
     log_df = pd.DataFrame(logs)
     log_df.to_csv(f"ppo_training_log_{idx}.csv", index=False)
+    
+    # Devolver el mejor modelo
+    if best_model_state is not None:
+        model.load_state_dict(best_model_state)
+ 
     return model, avg_reward
