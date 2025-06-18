@@ -110,6 +110,10 @@ class SupervisorWrapper(gym.Env):
 
         if aggregation_method == 'sum':
           self.agg_func = self.__reward_sum
+        elif aggregation_method == 'sum_max':
+          self.agg_func = self.__reward_sum_max
+        elif aggregation_method == 'sum_minmax':
+          self.agg_func = self.__reward_sum_minmax
         elif aggregation_method == 'expmean':
           self.agg_func = self.__reward_expmean
         elif aggregation_method == 'min':
@@ -124,6 +128,45 @@ class SupervisorWrapper(gym.Env):
 
     def __reward_sum(self, rewards):
       return sum(rewards)
+
+    
+    def __reward_sum_minmax(self, rewards):
+      reward = sum(rewards)
+      
+      # Paso 2: actualización de estadísticas exponenciales
+      if self.min_r is None or self.max_r is None:
+          self.min_r = reward
+          self.max_r = reward
+      else:
+          self.min_r = min(self.min_r, reward)
+          self.max_r = max(self.max_r, reward)
+
+          # Opción más suave (EMA):
+          self.min_r = (1 - self.ema_alpha) * self.min_r + self.ema_alpha * reward if reward < self.min_r else self.min_r
+          self.max_r = (1 - self.ema_alpha) * self.max_r + self.ema_alpha * reward if reward > self.max_r else self.max_r
+
+      # Paso 3: normalización en [0, 1]
+      norm_range = self.max_reward - self.min_r + 1e-8  # evita división por cero
+      normalized_reward = (reward - self.min_r) / norm_range
+
+      return np.clip(normalized_reward, 0.0, 1.0)
+
+    
+    def __reward_sum_max(self, rewards):
+      reward = sum(rewards)
+      # Paso 2: actualización de estadísticas exponenciales
+      if self.min_r is None:
+        self.min_r = reward
+      else:
+        self.min_r = min(self.min_r, reward)
+        # Opción más suave (EMA):
+        self.min_r = (1 - self.ema_alpha) * self.min_r + self.ema_alpha * reward if reward < self.min_r else self.min_r
+
+      # Paso 3: normalización en [0, 1]
+      norm_range = self.max_reward - self.min_r + 1e-8  # evita división por cero
+      normalized_reward = (reward - self.min_r) / norm_range
+
+      return np.clip(normalized_reward, 0.0, 1.0)
 
 
     def __reward_expmean(self, rewards):
