@@ -58,8 +58,8 @@ class PistonBallWrapper:
         
         if agent == 'piston_0':
             piston_tops = [None] + piston_tops
-        elif agent == 'piston_19':
-            piston_tops = piston_tops + [None]
+        elif agent == f'piston_{len(self.env.possible_agents)-1}':
+            piston_tops = [(x, 0 if y is None else y) for (x, y) in piston_tops]
         
         piston_tops = [x if x is not None else (0,0) for x in piston_tops]
         piston_tops = [item for tup in piston_tops for item in tup]
