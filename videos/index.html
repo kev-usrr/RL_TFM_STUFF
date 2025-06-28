@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Resultados - Cooperative Pong y otros entornos</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #fafafa;
+      max-width: 960px;
+      margin: auto;
+      padding: 2rem;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 3rem;
+    }
+    h2 {
+      margin-top: 2.5rem;
+      color: #333;
+      border-bottom: 2px solid #ccc;
+      padding-bottom: 0.3rem;
+    }
+    .video-container {
+      margin-bottom: 2rem;
+    }
+    video {
+      width: 100%;
+      max-height: 480px;
+      border: 1px solid #aaa;
+      border-radius: 6px;
+    }
+    .label {
+      margin-top: 0.5rem;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Resultados - Multi-Agent RL</h1>
+
+  <h2>Cooperative Pong</h2>
+  <div class="video-container">
+    <div class="label">RGB</div>
+    <video controls src="pong/pong_rgb.mp4"></video>
+  </div>
+  <div class="video-container">
+    <div class="label">Vector</div>
+    <video controls src="pong/pong_vect.mp4"></video>
+  </div>
+
+  <h2>Pistonball</h2>
+  <div class="video-container">
+    <div class="label">RGB</div>
+    <video controls src="pistonball/piston_rgb.mp4"></video>
+  </div>
+  <div class="video-container">
+    <div class="label">Vectorized</div>
+    <video controls src="pistonball/piston_vect.mp4"></video>
+  </div>
+  <div class="video-container">
+    <div class="label">RGB Discrete</div>
+    <video controls src="pistonball/piston_rgb_discrete.mp4"></video>
+  </div>
+  <div class="video-container">
+    <div class="label">Vectorized Discrete</div>
+    <video controls src="pistonball/piston_vect_discrete.mp4"></video>
+  </div>
+
+  <h2>Simple Spread</h2>
+  <div class="video-container">
+    <div class="label">Spread</div>
+    <video controls src="spread/spread.mp4"></video>
+  </div>
+
+   <h2>Simple Speaker Listener</h2>
+  <div class="video-container">
+    <div class="label">Speaker Listener</div>
+    <video controls src="speaker_listener/speaker_listener.mp4"></video>
+  </div>
+
+  <h2>Pursuit</h2>
+  <div class="video-container">
+    <div class="label">Sum</div>
+    <video controls src="pursuit/pursuit_sum.mp4"></video>
+  </div>
+  <div class="video-container">
+    <div class="label">Cooperative Sum</div>
+    <video controls src="pursuit/pursuit_coop_sum.mp4"></video>
+  </div>
+  <div class="video-container">
+    <div class="label">Softmin</div>
+    <video controls src="pursuit/pursuit_softmin.mp4"></video>
+  </div>
+ 
+
+  <h2>Multiwalker</h2>
+  <div class="video-container">
+    <div class="label">Sum</div>
+    <video controls src="multiwalker/multiwalker_sum.mp4"></video>
+  </div>
+  <div class="video-container">
+    <div class="label">Cooperative Sum</div>
+    <video controls src="multiwalker/mutliwalker_sum_coop.mp4"></video>
+  </div>
+  <div class="video-container">
+    <div class="label">Softmin</div>
+    <video controls src="multiwalker/multiwalker_softmin.mp4"></video>
+  </div>
+  
+
+  <h2>Knights, Archers & Zombies</h2>
+  <div class="video-container">
+    <div class="label">Sum</div>
+    <video controls src="zombies/zombies_sum.mp4"></video>
+  </div>
+  <div class="video-container">
+    <div class="label">Softmin</div>
+    <video controls src="zombies/zombies_softmin.mp4"></video>
+  </div>
+
+  <h2>Simple Reference</h2>
+  <div class="video-container">
+    <div class="label">Sum</div>
+    <video controls src="simple_reference/simple_reference_sum.mp4"></video>
+  </div>
+  <div class="video-container">
+    <div class="label">Softmin</div>
+    <video controls src="simple_reference/simple_reference_softmin.mp4"></video>
+  </div>
+ 
+  <h2>Waterworld</h2>
+  <div class="video-container">
+    <div class="label">Sum</div>
+    <video controls src="waterworld/waterworld_sum.mp4"></video>
+  </div>
+  <div class="video-container">
+    <div class="label">Softmin</div>
+    <video controls src="waterworld/waterworld_softmin.mp4"></video>
+  </div>
+
+</body>
+</html>
