@@ -34,6 +34,12 @@
       margin-top: 0.5rem;
       font-weight: bold;
     }
+    .description {
+      font-size: 1rem;
+      color: #555;
+      margin-top: -1rem;
+      margin-bottom: 1.5rem;
+    }
   </style>
 </head>
 <body>
@@ -41,6 +47,7 @@
   <h1>Resultados - Multi-Agent RL</h1>
 
   <h2 id="coop_pong">Cooperative Pong</h2>
+  <p class="description">Cooperative Pong is a variant of the classic Pong game in which agents must cooperate to keep the ball in play for as long as possible. The challenge in this environment lies in achieving coordinated behaviour that prevents the ball from "escaping" the playing field.</p>
   <div class="video-container">
     <div class="label">RGB</div>
     <video controls src="videos/pong/pong_rgb.mp4"></video>
@@ -51,6 +58,7 @@
   </div>
 
   <h2 id="pistonball">Pistonball</h2>
+  <p class="description">Pistonball is an environment where certain pistons can move up or down and must cooperate to move a ball as quickly as possible to the left side of the stage.</p>
   <div class="video-container">
     <div class="label">RGB</div>
     <video controls src="videos/pistonball/piston_rgb.mp4"></video>
@@ -61,6 +69,7 @@
   </div>
 
   <h2 id="pistonball_discrete">Pistonball Discrete</h2>
+  <p class="description">Pistonball is an environment where certain pistons can move up or down and must cooperate to move a ball as quickly as possible to the left side of the stage. These videos showcase the versions of the environment where the action space is discrete, allowing for three distinct actions.</p>
   <div class="video-container">
     <div class="label">RGB Discrete</div>
     <video controls src="videos/pistonball/piston_rgb_discrete.mp4"></video>
@@ -71,18 +80,21 @@
   </div>
 
   <h2 id="spread">Simple Spread</h2>
+  <p class="description">Simple Spread is an environment where three agents must cooperate to cover three separate landmarks distributed across the map.</p>
   <div class="video-container">
     <div class="label">Spread</div>
     <video controls src="videos/spread/spread.mp4"></video>
   </div>
 
-   <h2 id="speaker_listener">Simple Speaker Listener</h2>
+  <h2 id="speaker_listener">Simple Speaker Listener</h2>
+  <p class="description">Simple Speaker Listener is an environment where two agents must cooperate: the Speaker (represented by a black ball) provides instructions to guide the Listener toward a specific target. The Listener (represented by a colored ball) must identify and move toward the ball that matches its own color.</p>
   <div class="video-container">
     <div class="label">Speaker Listener</div>
     <video controls src="videos/speaker_listener/speaker_listener.mp4"></video>
   </div>
 
   <h2 id="pursuit">Pursuit</h2>
+  <p class="description">Pursuit is an environment in which a group of pursuer agents must cooperate to capture a set of evaders. To do so, they need to coordinate in such a way that they successfully surround the evaders, as this is the only way to eliminate them and make them disappear from the environment. The goal, therefore, is to eliminate as many evaders as possible. Evaders are representes as blue dots, while Pursuer agents are represented as red dots.</p>
   <div class="video-container">
     <div class="label">Sum</div>
     <video controls src="videos/pursuit/pursuit_sum.mp4"></video>
@@ -98,6 +110,7 @@
  
 
   <h2 id="multiwalker">Multiwalker</h2>
+  <p class="description">Multiwalker is an environment in which two robots must cooperate to move forward without dropping a plank that they carry above their heads. The game ends when either the plank falls to te ground, both robots fall to the ground, or they reach the end of the terrain.</p>
   <div class="video-container">
     <div class="label">Sum</div>
     <video controls src="videos/multiwalker/multiwalker_sum.mp4"></video>
@@ -113,6 +126,7 @@
   
 
   <h2 id="zombies">Knights, Archers & Zombies</h2>
+  <p class="description">Knights, Archers & Zombies is an environment where two types of agents—knights and archers—must cooperate to eliminate waves of zombies that appear throughout the scenario. The game ends when both agents are eliminated, or any zombie reaches the bottom border of the environment. </p>
   <div class="video-container">
     <div class="label">Sum</div>
     <video controls src="videos/zombies/zombies_sum.mp4"></video>
@@ -123,6 +137,7 @@
   </div>
 
   <h2 id="simple_reference">Simple Reference</h2>
+  <p class="description">Simple Reference is an environment in which two agents must reach their respective target landmarks through mutual communication. Specifically, each agent is unaware of the location of its own landmark but knows the location of the other agent’s target. Thus, both agents must act simultaneously as speakers and listeners in order to reach their destinations. Each agent is represented by a colored ball and must move as close as possible to a stationary ball of the same color.</p>
   <div class="video-container">
     <div class="label">Sum</div>
     <video controls src="videos/simple_reference/simple_reference_sum.mp4"></video>
@@ -133,6 +148,7 @@
   </div>
  
   <h2 id="waterworld">Waterworld</h2>
+  <p class="description">Waterworld is an environment where a group of archaeas must navigate a space, consuming food while avoiding poison. Food, represented by green circles, can only be successfully consumed when two archaeas are in close proximity to it simultaneously. Poison is represented by the smaller red circles.</p>
   <div class="video-container">
     <div class="label">Sum</div>
     <video controls src="videos/waterworld/waterworld_sum.mp4"></video>
